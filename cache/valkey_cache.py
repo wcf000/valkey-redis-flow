@@ -10,14 +10,33 @@ Core VALKEY functionality including:
 import hashlib
 import json
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from opentelemetry import trace
 
+from app.core.grafana.metrics import (
+    record_valkey_cache_delete,
+    record_valkey_cache_error,
+    record_valkey_cache_hit,
+    record_valkey_cache_miss,
+    record_valkey_cache_set,
+)
+from app.core.prometheus.metrics import (
+    VALKEY_CACHE_DELETES,
+    VALKEY_CACHE_ERRORS,
+    VALKEY_CACHE_HITS,
+    VALKEY_CACHE_MISSES,
+    VALKEY_CACHE_SETS,
+)
+from app.core.telemetry.client import TelemetryClient
 from app.core.valkey.client import client as valkey_client
+
+telemetry = TelemetryClient(service_name="valkey_cache")
 
 tracer = trace.get_tracer(__name__)
 logger = logging.getLogger(__name__)
+
 
 async def get_cached_result(key: str, default: Any = None) -> Any:
     """
@@ -28,14 +47,24 @@ async def get_cached_result(key: str, default: Any = None) -> Any:
     Returns:
         Cached value, or default if not found
     """
-    try:
-        value = await valkey_client.get(key)
-        if value is None:
+    # Trace cache get
+    with telemetry.span_cache_operation("get", {"key": key}):
+        try:
+            value = await valkey_client.get(key)
+            if value is None:
+                VALKEY_CACHE_MISSES.inc()
+                record_valkey_cache_miss()
+                return default
+            VALKEY_CACHE_HITS.inc()
+            record_valkey_cache_hit()
+            return value
+        except Exception as e:
+            # Record cache error
+            VALKEY_CACHE_ERRORS.inc()
+            record_valkey_cache_error()
+            logger.warning(f"Error retrieving from VALKEY cache: {str(e)}")
             return default
-        return value
-    except Exception as e:
-        logger.warning(f"Error retrieving from VALKEY cache: {str(e)}")
-        return default
+
 
 async def invalidate_cache_key(key: str) -> bool:
     """
@@ -45,13 +74,28 @@ async def invalidate_cache_key(key: str) -> bool:
     Returns:
         True if the key was found and deleted, False otherwise
     """
-    try:
-        return bool(await valkey_client.delete(key))
-    except Exception as e:
-        logger.warning(f"Error invalidating VALKEY cache: {str(e)}")
-        return False
+    # Trace cache delete
+    with telemetry.span_cache_operation("delete", {"key": key}):
+        try:
+            result = bool(await valkey_client.delete(key))
+            if result:
+                VALKEY_CACHE_DELETES.inc()
+                record_valkey_cache_delete()
+            else:
+                VALKEY_CACHE_MISSES.inc()
+                record_valkey_cache_miss()
+            return result
+        except Exception as e:
+            # Record cache error
+            VALKEY_CACHE_ERRORS.inc()
+            record_valkey_cache_error()
+            logger.warning(f"Error invalidating VALKEY cache: {str(e)}")
+            return False
 
-async def get_or_set_cache(key: str, func: Callable[[], Any], expire_seconds: int | None = None) -> Any:
+
+async def get_or_set_cache(
+    key: str, func: Callable[[], Any], expire_seconds: int | None = None
+) -> Any:
     """
     Get a value from VALKEY, or compute and store it if not found.
     Args:
@@ -61,16 +105,28 @@ async def get_or_set_cache(key: str, func: Callable[[], Any], expire_seconds: in
     Returns:
         The cached or computed value
     """
-    try:
-        value = await valkey_client.get(key)
-        if value is not None:
-            return value
-        result = func()
-        await valkey_client.set(key, result, expire_seconds)
-        return result
-    except Exception as e:
-        logger.error(f"Error computing or caching result in VALKEY: {str(e)}")
-        raise
+    # Trace get or set cache
+    with telemetry.span_cache_operation("get_or_set", {"key": key}):
+        try:
+            value = await valkey_client.get(key)
+            if value is not None:
+                VALKEY_CACHE_HITS.inc()
+                record_valkey_cache_hit()
+                return value
+            VALKEY_CACHE_MISSES.inc()
+            record_valkey_cache_miss()
+            result = func()
+            await valkey_client.set(key, result, expire_seconds)
+            VALKEY_CACHE_SETS.inc()
+            record_valkey_cache_set()
+            return result
+        except Exception as e:
+            # Record cache error
+            VALKEY_CACHE_ERRORS.inc()
+            record_valkey_cache_error()
+            logger.error(f"Error computing or caching result in VALKEY: {str(e)}")
+            raise
+
 
 def cache_result(expire_seconds: int | None = None, key_prefix: str = ""):
     """
@@ -81,6 +137,7 @@ def cache_result(expire_seconds: int | None = None, key_prefix: str = ""):
     Returns:
         Decorated function that uses VALKEY caching
     """
+
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         async def wrapper(*args, **kwargs):
             key_args = json.dumps(args, sort_keys=True, default=str)
@@ -93,5 +150,7 @@ def cache_result(expire_seconds: int | None = None, key_prefix: str = ""):
             result = await func(*args, **kwargs)
             await valkey_client.set(key, result, expire_seconds)
             return result
+
         return wrapper
+
     return decorator
