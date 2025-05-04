@@ -1,0 +1,88 @@
+flowchart TD
+ subgraph CacheOps["Cache Operations"]
+    direction TB
+        CacheMethod{{"Cache Method?"}}
+        F["Basic Cache Ops"]
+        G["Decorator Simple"]
+        H["Decorator Advanced"]
+        I["Batch Warm Cache"]
+        J["Cache Invalidation"]
+  end
+ subgraph HealthChecks["Health Checks"]
+    direction TB
+        Health{{"Health Method?"}}
+        O["Status Check"]
+        P["Client Health"]
+        Q["API Endpoint"]
+  end
+ subgraph Utils["Utility Functions"]
+    direction TB
+        Util{{"Utility Function?"}}
+        S["Get Client"]
+        T["OpenTelemetry"]
+  end
+ subgraph OtherOps["Other Operations"]
+    direction TB
+        K["Batched Operations"]
+        L["Real-time Messaging"]
+        M["Error Handling"]
+        HealthChecks
+        Utils
+  end
+ subgraph CoreActions["Core Actions"]
+    direction TB
+        ChooseAction{{"Choose Action"}}
+        CacheOps
+        OtherOps
+  end
+ subgraph CoreModules["Core Modules"]
+    direction TB
+        V["ValkeyConfig"]
+        W["Async Client"]
+        X["Cache Ops"]
+        Y["Decorators"]
+        Z["Exceptions"]
+        AA["Health Check"]
+  end
+ subgraph ExternalSystems["External Systems"]
+    direction TB
+        BB["Valkey Server"]
+        CC["Prometheus"]
+        DD["OpenTelemetry"]
+  end
+ subgraph BestPractices["Best Practices"]
+    direction TB
+        EE["Remember:<br>• Async Prefixes<br>• Config TTLs"]
+        FF["Avoid:<br>• Sync Code<br>• Hardcoding"]
+        GG["Test:<br>• Mock Client<br>• Clean Data"]
+        HH["Monitor:<br>• Tracing<br>• Metrics"]
+  end
+    TDA["Start Using Valkey Integration"] --> B["Configure via config.py"]
+    B --> C["Get Async Client Singleton"] & V
+    CacheMethod --> F & G & H & I & J
+    Health --> O & P & Q
+    Util --> S & T
+    ChooseAction --> CacheOps & OtherOps
+    C --> ChooseAction & W
+    F --> X & BB & CC & DD
+    G --> X & BB & CC & DD
+    H --> Y & BB & CC & DD
+    I --> Y & BB & CC & DD
+    J --> Y & BB & CC & DD
+    M --> Z & DD
+    O --> AA & BB & CC
+    P --> W & BB & CC
+    Q --> AA
+    S --> Y & BB
+    T --> W
+    K --> BB & CC & DD
+    L --> BB & CC & DD
+    W --> DD
+    OtherOps --> Utils
+
+    classDef core fill:#f9f,stroke:#333,stroke-width:1px,color:#000
+    classDef external fill:#ccf,stroke:#333,stroke-width:1px,color:#000
+    classDef actions fill:#eee,stroke:#333,stroke-width:1px,color:#000
+    classDef bestPractices fill:#lightgrey,stroke:#333,stroke-width:1px,stroke-dasharray: 5 5,color:#000
+
+
