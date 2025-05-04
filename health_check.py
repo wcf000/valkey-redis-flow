@@ -10,14 +10,13 @@ from fastapi.responses import JSONResponse
 
 from app.core.valkey.client import ValkeyClient
 from app.core.valkey.config import ValkeyConfig
-
-from app.core.redis.rate_limit import service_rate_limit
+from app.core.valkey.limiting.rate_limit import service_rate_limit
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-class RedisHealth:
+class ValkeyHealth:
     """
     Health checks for Redis including:
     - Connection health
@@ -81,11 +80,11 @@ class RedisHealth:
         return response
 
 
-redis_health = RedisHealth()
+valkey_health = ValkeyHealth()
 
 
 @router.get("/health/redis")
 @service_rate_limit
-async def redis_health_check():
-    """Endpoint for Redis health checks."""
-    return await redis_health.get_health_status()
+async def valkey_health_check():
+    """Endpoint for Redis health c  hecks."""
+    return await valkey_health.get_health_status()

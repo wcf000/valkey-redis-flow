@@ -21,13 +21,13 @@ CACHE_INVALIDATIONS = Counter(
 )
 
 
-async def get_redis_client() -> ValkeyClient:
+async def get_valkey_client() -> ValkeyClient:
     client = ValkeyClient()
     return await client.get_client()
 
 
 async def warm_cache_batch(keys: list[str], loader: callable, ttl: int):
-    redis = await get_redis_client()
+    redis = await get_valkey_client()
     async with redis.pipeline() as pipe:
         for key in keys:
             data = await loader(key)
@@ -55,6 +55,74 @@ async def warm_cache(
 
 
 def cache(
+    ttl: int = 60,
+    key_prefix: str = "cache:",
+    client: ValkeyClient | None = None,
+):
+    """
+    Decorator for async cache with Valkey. Accepts optional client instance for testability.
+    """
+
+    def decorator(func: Callable):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            nonlocal client
+            if client is None:
+                from app.core.valkey.client import client as default_client
+
+                client = default_client
+            valkey_client = await client.get_client()
+            sig = inspect.signature(func)
+            bound_args = sig.bind(*args, **kwargs)
+            bound_args.apply_defaults()
+
+            key = f"{key_prefix}{func.__module__}:{func.__name__}:{hash(str(bound_args.arguments))}"
+
+            cached = await valkey_client.get(key, timeout=ValkeyConfig.VALKEY_TIMEOUT)
+            if cached is not None:
+                CACHE_HITS.labels(key_pattern=key).inc()
+                return cached
+
+            logger.debug(f"Cache miss for {key}")
+            result = await func(*args, **kwargs)
+            await valkey_client.set(
+                key, result, ex=ttl, timeout=ValkeyConfig.VALKEY_TIMEOUT
+            )
+            return result
+
+        return wrapper
+
+    return decorator
+
+
+async def warm_valkey_cache_batch(keys: list[str], loader: callable, ttl: int):
+    valkey = await get_valkey_client()
+    pipe = await valkey.pipeline()
+    for key in keys:
+        data = await loader(key)
+        if data:
+            await pipe.set(f"cache:{key}", data, ex=ttl)
+    await pipe.execute()
+
+
+async def warm_valkey_cache(
+    keys: list[str],
+    loader: callable,
+    ttl: int = 300,
+    priority: int = 1,
+    batch_size: int = 100,
+):
+    sorted_keys = sorted(
+        keys,
+        key=lambda k: int(k.split(":")[-1]) if k.split(":")[-1].isdigit() else priority,
+        reverse=True,
+    )
+    for i in range(0, len(sorted_keys), batch_size):
+        batch = sorted_keys[i : i + batch_size]
+        await warm_valkey_cache_batch(batch, loader, ttl)
+
+
+def valkey_cache(
     client: ValkeyClient,
     ttl: int = 3600,
     key_prefix: str = "cache:",
@@ -62,21 +130,23 @@ def cache(
     def decorator(func: Callable):
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
-            client = await client.get_client()
+            client_instance = await client.get_client()
             sig = inspect.signature(func)
             bound_args = sig.bind(*args, **kwargs)
             bound_args.apply_defaults()
 
             key = f"{key_prefix}{func.__module__}:{func.__name__}:{hash(str(bound_args.arguments))}"
 
-            cached = await client.get(key, timeout=ValkeyConfig.VALKEY_TIMEOUT)
+            cached = await client_instance.get(key, timeout=ValkeyConfig.VALKEY_TIMEOUT)
             if cached is not None:
                 CACHE_HITS.labels(key_pattern=key).inc()
                 return cached
 
-            logger.debug(f"Cache miss for {key}")
+            logger.debug(f"Valkey cache miss for {key}")
             result = await func(*args, **kwargs)
-            await client.set(key, result, ex=ttl, timeout=ValkeyConfig.VALKEY_TIMEOUT)
+            await client_instance.set(
+                key, result, ex=ttl, timeout=ValkeyConfig.VALKEY_TIMEOUT
+            )
             return result
 
         return wrapper
@@ -97,7 +167,7 @@ def get_or_set_cache(
             if use_batch_warmer and isinstance(args[0], list):
                 return await warm_cache_batch(args[0], func, ttl)
 
-            redis = await get_redis_client()
+            redis = await get_valkey_client()
             key = key_fn(*args, **kwargs)
 
             try:

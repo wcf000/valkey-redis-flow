@@ -8,6 +8,7 @@ Follows best practices for:
 - Sharding support
 - OpenTelemetry tracing for all key operations
 - Structured Valkey exception handling
+- Distributed locking
 """
 
 import asyncio
@@ -15,24 +16,27 @@ import json
 import logging
 from typing import Any
 
-from circuitbreaker import circuit
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 from prometheus_client import Gauge, Histogram
 from valkey.asyncio import Valkey, ValkeyCluster
+from valkey.backoff import (
+    ConstantBackoff,
+    DecorrelatedJitterBackoff,
+    ExponentialBackoff,
+)
 from valkey.exceptions import TimeoutError, ValkeyError
+from valkey.retry import Retry
 
-from app.core.valkey.exceptions.exceptions import handle_valkey_exceptions
 from app.core.valkey.config import ValkeyConfig
+from app.core.valkey.exceptions.exceptions import handle_valkey_exceptions
 
 VALKEY_CLUSTER = ValkeyConfig.VALKEY_CLUSTER
 VALKEY_DB = ValkeyConfig.VALKEY_DB
-VALKEY_FAILURE_THRESHOLD = ValkeyConfig.VALKEY_FAILURE_THRESHOLD
 VALKEY_HOST = ValkeyConfig.VALKEY_HOST
 VALKEY_MAX_CONNECTIONS = ValkeyConfig.VALKEY_MAX_CONNECTIONS
 VALKEY_PASSWORD = ValkeyConfig.VALKEY_PASSWORD
 VALKEY_PORT = ValkeyConfig.VALKEY_PORT
-VALKEY_RECOVERY_TIMEOUT = ValkeyConfig.VALKEY_RECOVERY_TIMEOUT
 VALKEY_SOCKET_CONNECT_TIMEOUT = ValkeyConfig.VALKEY_SOCKET_CONNECT_TIMEOUT
 VALKEY_SOCKET_TIMEOUT = ValkeyConfig.VALKEY_SOCKET_TIMEOUT
 
@@ -44,17 +48,41 @@ DEFAULT_SOCKET_TIMEOUT = 10.0
 DEFAULT_COMMAND_TIMEOUT = 5.0
 
 # Prometheus metrics
-SHARD_SIZE_GAUGE = Gauge(
-    "valkey_shard_size_bytes", "Size of Valkey shards in bytes", ["shard"]
-)
-SHARD_OPS_GAUGE = Gauge(
-    "valkey_shard_ops_per_sec", "Operations per second per shard", ["shard"]
-)
-REQUEST_DURATION = Histogram(
-    "valkey_request_duration_seconds", "Valkey request duration", ["operation", "shard"]
-)
+SHARD_SIZE_GAUGE = None
+SHARD_OPS_GAUGE = None
+REQUEST_DURATION = None
 
 tracer = trace.get_tracer(__name__)
+
+
+class ValkeyLock:
+    """
+    Distributed lock using Valkey's built-in lock mechanism.
+    Usage:
+        async with ValkeyLock(client, name, timeout=5):
+            # critical section
+    """
+    def __init__(self, client, name: str, timeout: float | None = None, sleep: float = 0.1, blocking: bool = True, blocking_timeout: float | None = None, thread_local: bool = True):
+        self._lock = client._client.lock(
+            name,
+            timeout=timeout,
+            sleep=sleep,
+            blocking=blocking,
+            blocking_timeout=blocking_timeout,
+            thread_local=thread_local,
+        )
+
+    async def __aenter__(self):
+        # Valkey's lock acquire is blocking, so run in executor if needed
+        loop = asyncio.get_event_loop()
+        acquired = await loop.run_in_executor(None, self._lock.acquire)
+        if not acquired:
+            raise TimeoutError("Could not acquire Valkey lock")
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._lock.release)
 
 
 class ValkeyClient:
@@ -68,6 +96,7 @@ class ValkeyClient:
     - Sharding support
     - OpenTelemetry tracing for all key operations
     - Structured Valkey exception handling
+    - Distributed locking (see lock method)
     """
 
     def __init__(self):
@@ -75,6 +104,33 @@ class ValkeyClient:
         self._client = None
         self._cluster_mode = VALKEY_CLUSTER
         self._metrics_task = None
+        self._metrics_enabled = ValkeyConfig.VALKEY_METRICS_ENABLED
+        self._metrics_namespace = getattr(
+            ValkeyConfig, "REDIS_METRICS_NAMESPACE", "valkey"
+        )
+
+        # Only register metrics if enabled
+        if self._metrics_enabled:
+            self._register_metrics()
+
+    def _register_metrics(self):
+        global SHARD_SIZE_GAUGE, SHARD_OPS_GAUGE, REQUEST_DURATION
+        # Register Prometheus metrics with namespace if needed
+        SHARD_SIZE_GAUGE = Gauge(
+            f"{self._metrics_namespace}_shard_size_bytes",
+            "Size of Valkey shards in bytes",
+            ["shard"],
+        )
+        SHARD_OPS_GAUGE = Gauge(
+            f"{self._metrics_namespace}_shard_ops_per_sec",
+            "Operations per second per shard",
+            ["shard"],
+        )
+        REQUEST_DURATION = Histogram(
+            f"{self._metrics_namespace}_request_duration_seconds",
+            "Valkey request duration",
+            ["operation", "shard"],
+        )
 
     async def get_client(self) -> Valkey | ValkeyCluster:
         """
@@ -89,6 +145,25 @@ class ValkeyClient:
     async def _get_cluster_client(self) -> ValkeyCluster:
         """Get a cluster Valkey client based on configuration"""
         if not self._client:
+            # Choose backoff strategy based on config
+            backoff_type = ValkeyConfig.VALKEY_RETRY_BACKOFF_TYPE
+            if backoff_type == "exponential":
+                backoff = ExponentialBackoff(
+                    base=ValkeyConfig.VALKEY_RETRY_BACKOFF_BASE,
+                    cap=ValkeyConfig.VALKEY_RETRY_BACKOFF_CAP,
+                )
+            elif backoff_type == "jitter":
+                backoff = DecorrelatedJitterBackoff(
+                    base=ValkeyConfig.VALKEY_RETRY_BACKOFF_BASE,
+                    cap=ValkeyConfig.VALKEY_RETRY_BACKOFF_CAP,
+                )
+            else:
+                backoff = ConstantBackoff(ValkeyConfig.VALKEY_RETRY_BACKOFF_BASE)
+            retry = Retry(
+                backoff,
+                retries=ValkeyConfig.VALKEY_RETRY_ATTEMPTS,
+                supported_errors=(TimeoutError, ValkeyError),
+            )
             self._client = ValkeyCluster(
                 host=VALKEY_HOST,
                 port=VALKEY_PORT,
@@ -97,22 +172,53 @@ class ValkeyClient:
                 socket_timeout=VALKEY_SOCKET_TIMEOUT,
                 socket_connect_timeout=VALKEY_SOCKET_CONNECT_TIMEOUT,
                 max_connections=VALKEY_MAX_CONNECTIONS,
+                ssl=ValkeyConfig.VALKEY_SSL,
+                ssl_cert_reqs=ValkeyConfig.VALKEY_SSL_CERT_REQS,
+                ssl_ca_certs=ValkeyConfig.VALKEY_SSL_CA_CERTS,
+                ssl_keyfile=ValkeyConfig.VALKEY_SSL_KEYFILE,
+                ssl_certfile=ValkeyConfig.VALKEY_SSL_CERTFILE,
+                retry=retry,
+                cluster_error_retry_attempts=ValkeyConfig.VALKEY_RETRY_ATTEMPTS,
             )
         return self._client
 
-    async def _get_sharded_client(self) -> ValkeyCluster:
-        """Get a Valkey client configured for sharded mode"""
-        from valkey.asyncio.cluster import ValkeyCluster
-
-        return ValkeyCluster(
-            startup_nodes=[{"host": VALKEY_HOST, "port": VALKEY_PORT}],
-            password=VALKEY_PASSWORD,
-            db=VALKEY_DB,
-            max_connections_per_node=VALKEY_MAX_CONNECTIONS,
-            socket_timeout=VALKEY_SOCKET_TIMEOUT,
-            socket_connect_timeout=VALKEY_SOCKET_CONNECT_TIMEOUT,
-            decode_responses=True,
-        )
+    async def _get_sharded_client(self) -> Valkey:
+        """Get a sharded Valkey client based on configuration"""
+        if not self._client:
+            backoff_type = ValkeyConfig.VALKEY_RETRY_BACKOFF_TYPE
+            if backoff_type == "exponential":
+                backoff = ExponentialBackoff(
+                    base=ValkeyConfig.VALKEY_RETRY_BACKOFF_BASE,
+                    cap=ValkeyConfig.VALKEY_RETRY_BACKOFF_CAP,
+                )
+            elif backoff_type == "jitter":
+                backoff = DecorrelatedJitterBackoff(
+                    base=ValkeyConfig.VALKEY_RETRY_BACKOFF_BASE,
+                    cap=ValkeyConfig.VALKEY_RETRY_BACKOFF_CAP,
+                )
+            else:
+                backoff = ConstantBackoff(ValkeyConfig.VALKEY_RETRY_BACKOFF_BASE)
+            retry = Retry(
+                backoff,
+                retries=ValkeyConfig.VALKEY_RETRY_ATTEMPTS,
+                supported_errors=(TimeoutError, ValkeyError),
+            )
+            self._client = Valkey(
+                host=VALKEY_HOST,
+                port=VALKEY_PORT,
+                password=VALKEY_PASSWORD,
+                db=VALKEY_DB,
+                socket_timeout=VALKEY_SOCKET_TIMEOUT,
+                socket_connect_timeout=VALKEY_SOCKET_CONNECT_TIMEOUT,
+                max_connections=VALKEY_MAX_CONNECTIONS,
+                ssl=ValkeyConfig.VALKEY_SSL,
+                ssl_cert_reqs=ValkeyConfig.VALKEY_SSL_CERT_REQS,
+                ssl_ca_certs=ValkeyConfig.VALKEY_SSL_CA_CERTS,
+                ssl_keyfile=ValkeyConfig.VALKEY_SSL_KEYFILE,
+                ssl_certfile=ValkeyConfig.VALKEY_SSL_CERTFILE,
+                retry=retry,
+            )
+        return self._client
 
     async def shutdown(self):
         """Cleanly shutdown Valkey client"""
@@ -127,13 +233,10 @@ class ValkeyClient:
             raise ConnectionError("Valkey connection failed")
         self._metrics_task = asyncio.create_task(self._update_metrics())
 
-    @circuit(
-        failure_threshold=VALKEY_FAILURE_THRESHOLD,
-        recovery_timeout=VALKEY_RECOVERY_TIMEOUT,
-        expected_exception=(ValkeyError, TimeoutError),
-        fallback_function=lambda e: logger.warning(f"Circuit open: {str(e)}"),
-    )
-    async def get(self, key: str, timeout: float = DEFAULT_COMMAND_TIMEOUT) -> Any:
+    async def get(self, key: str, timeout: float = None) -> Any:
+        if timeout is None:
+            timeout = ValkeyConfig.VALKEY_COMMAND_TIMEOUT
+
         async def _action():
             with tracer.start_as_current_span("valkey.get") as span:
                 span.set_attribute("db.system", "valkey")
@@ -142,20 +245,21 @@ class ValkeyClient:
                 value = await (await self.get_client()).get(key, timeout=timeout)
                 span.set_status(StatusCode.OK)
                 return json.loads(value) if value else None
-        return await handle_valkey_exceptions(_action, logger=logger, endpoint="valkey.get")
 
-    @circuit(
-        failure_threshold=VALKEY_FAILURE_THRESHOLD,
-        recovery_timeout=VALKEY_RECOVERY_TIMEOUT,
-        expected_exception=(ValkeyError, TimeoutError),
-    )
+        return await handle_valkey_exceptions(
+            _action, logger=logger, endpoint="valkey.get"
+        )
+
     async def set(
         self,
         key: str,
         value: Any,
         ex: int | None = None,
-        timeout: float = DEFAULT_COMMAND_TIMEOUT,
+        timeout: float = None,
     ) -> bool:
+        if timeout is None:
+            timeout = ValkeyConfig.VALKEY_COMMAND_TIMEOUT
+
         async def _action():
             with tracer.start_as_current_span("valkey.set") as span:
                 span.set_attribute("db.system", "valkey")
@@ -167,7 +271,10 @@ class ValkeyClient:
                 )
                 span.set_status(StatusCode.OK)
                 return result
-        return await handle_valkey_exceptions(_action, logger=logger, endpoint="valkey.set")
+
+        return await handle_valkey_exceptions(
+            _action, logger=logger, endpoint="valkey.set"
+        )
 
     async def delete(self, *keys: str, timeout: float = DEFAULT_COMMAND_TIMEOUT) -> int:
         async def _action():
@@ -176,7 +283,10 @@ class ValkeyClient:
                 span.set_attribute("db.operation", "delete")
                 span.set_attribute("db.redis.keys", str(keys))
                 return await (await self.get_client()).delete(*keys, timeout=timeout)
-        return await handle_valkey_exceptions(_action, logger=logger, endpoint="valkey.delete")
+
+        return await handle_valkey_exceptions(
+            _action, logger=logger, endpoint="valkey.delete"
+        )
 
     async def is_healthy(self) -> bool:
         try:
@@ -193,7 +303,10 @@ class ValkeyClient:
                 value = await (await self.get_client()).incr(key)
                 span.set_status(StatusCode.OK)
                 return value
-        return await handle_valkey_exceptions(_action, logger=logger, endpoint="valkey.incr")
+
+        return await handle_valkey_exceptions(
+            _action, logger=logger, endpoint="valkey.incr"
+        )
 
     async def expire(
         self, key: str, ex: int, timeout: float = DEFAULT_COMMAND_TIMEOUT
@@ -207,7 +320,10 @@ class ValkeyClient:
                 result = await (await self.get_client()).expire(key, ex)
                 span.set_status(StatusCode.OK)
                 return result
-        return await handle_valkey_exceptions(_action, logger=logger, endpoint="valkey.expire")
+
+        return await handle_valkey_exceptions(
+            _action, logger=logger, endpoint="valkey.expire"
+        )
 
     async def ttl(self, key: str, timeout: float = DEFAULT_COMMAND_TIMEOUT) -> int:
         async def _action():
@@ -218,7 +334,10 @@ class ValkeyClient:
                 value = await (await self.get_client()).ttl(key)
                 span.set_status(StatusCode.OK)
                 return value
-        return await handle_valkey_exceptions(_action, logger=logger, endpoint="valkey.ttl")
+
+        return await handle_valkey_exceptions(
+            _action, logger=logger, endpoint="valkey.ttl"
+        )
 
     async def exists(self, key: str, timeout: float = DEFAULT_COMMAND_TIMEOUT) -> bool:
         async def _action():
@@ -229,7 +348,10 @@ class ValkeyClient:
                 exists = await (await self.get_client()).exists(key)
                 span.set_status(StatusCode.OK)
                 return exists == 1
-        return await handle_valkey_exceptions(_action, logger=logger, endpoint="valkey.exists")
+
+        return await handle_valkey_exceptions(
+            _action, logger=logger, endpoint="valkey.exists"
+        )
 
     async def pipeline(self):
         async def _action():
@@ -238,7 +360,10 @@ class ValkeyClient:
                 span.set_attribute("db.operation", "pipeline")
                 client = await self.get_client()
                 return client.pipeline()
-        return await handle_valkey_exceptions(_action, logger=logger, endpoint="valkey.pipeline")
+
+        return await handle_valkey_exceptions(
+            _action, logger=logger, endpoint="valkey.pipeline"
+        )
 
     async def pubsub(self):
         async def _action():
@@ -247,7 +372,10 @@ class ValkeyClient:
                 span.set_attribute("db.operation", "pubsub")
                 client = await self.get_client()
                 return client.pubsub()
-        return await handle_valkey_exceptions(_action, logger=logger, endpoint="valkey.pubsub")
+
+        return await handle_valkey_exceptions(
+            _action, logger=logger, endpoint="valkey.pubsub"
+        )
 
     async def _update_metrics(self):
         """Periodically update Valkey metrics"""
@@ -257,17 +385,28 @@ class ValkeyClient:
                 info = await client.info("all")
 
                 for shard, stats in info.items():
-                    SHARD_SIZE_GAUGE.labels(shard=shard).set(
-                        stats.get("used_memory", 0)
-                    )
-                    SHARD_OPS_GAUGE.labels(shard=shard).set(
-                        stats.get("instantaneous_ops_per_sec", 0)
-                    )
+                    if SHARD_SIZE_GAUGE:
+                        SHARD_SIZE_GAUGE.labels(shard=shard).set(
+                            stats.get("used_memory", 0)
+                        )
+                    if SHARD_OPS_GAUGE:
+                        SHARD_OPS_GAUGE.labels(shard=shard).set(
+                            stats.get("instantaneous_ops_per_sec", 0)
+                        )
 
             except Exception as e:
                 logger.error(f"Metrics update failed: {e}")
 
             await asyncio.sleep(60)  # Update every minute
+
+    def lock(self, name: str, timeout: float | None = None, sleep: float = 0.1, blocking: bool = True, blocking_timeout: float | None = None, thread_local: bool = True):
+        """
+        Acquire a distributed lock using Valkey's built-in locking.
+        Usage:
+            async with client.lock("resource_key", timeout=5):
+                ...
+        """
+        return ValkeyLock(self, name, timeout, sleep, blocking, blocking_timeout, thread_local)
 
 
 # Singleton Valkey client instance
@@ -286,3 +425,4 @@ ttl = client.ttl
 exists = client.exists
 pipeline = client.pipeline
 pubsub = client.pubsub
+lock = client.lock

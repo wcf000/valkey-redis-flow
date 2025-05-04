@@ -2,7 +2,6 @@
 Rate Limiting Utilities
 
 Provides production-grade rate limiting using Redis with:
-- Circuit breaker pattern
 - Exponential backoff
 - Detailed metrics
 """
@@ -10,16 +9,14 @@ Provides production-grade rate limiting using Redis with:
 import logging
 import time
 from datetime import datetime, timedelta
-from typing import Optional, Tuple
 
-from circuitbreaker import circuit
 from fastapi import HTTPException, status
 from prometheus_client import Counter, Gauge
 
-from app.core.valkey.client import ValkeyClient
 from app.core.third_party_integrations.supabase_home.functions.auth import (
     SupabaseAuthService,
 )
+from app.core.valkey.client import ValkeyClient
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +52,6 @@ return #keys
 """
 
 
-@circuit(failure_threshold=3, recovery_timeout=60)
 async def check_rate_limit(key: str, limit: int, window: int) -> bool:
     """
     Improved sliding window rate limiting using Redis sorted sets
@@ -133,16 +129,6 @@ async def alert_system(message: str) -> None:
     logger.warning(message)
 
 
-RATE_LIMIT_CIRCUIT = {
-    "failure_threshold": 3,
-    "recovery_timeout": 60,
-}
-
-
-@circuit(
-    failure_threshold=RATE_LIMIT_CIRCUIT["failure_threshold"],
-    recovery_timeout=RATE_LIMIT_CIRCUIT["recovery_timeout"],
-)
 async def verify_and_limit(token: str, ip: str, endpoint: str, window: int = 3600):
     """
     Enhanced with:

@@ -6,6 +6,8 @@ Defines:
 - handle_valkey_exceptions async utility
 """
 
+from fastapi import HTTPException
+from prometheus_client import Counter
 from valkey.exceptions import (
     AskError,
     AuthenticationError,
@@ -39,8 +41,6 @@ from valkey.exceptions import (
     ValkeyError,
     WatchError,
 )
-from fastapi import HTTPException
-from prometheus_client import Counter
 
 VALKEY_ERRORS = Counter(
     "valkey_exceptions_total",
