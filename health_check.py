@@ -1,5 +1,5 @@
 """
-Redis health checks for monitoring and readiness probes.
+Valkey health checks for monitoring and readiness probes.
 """
 
 import logging
@@ -7,6 +7,9 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+
+from valkey.asyncio import Valkey
+from valkey.exceptions import TimeoutError, ValkeyError
 
 from app.core.valkey.client import ValkeyClient
 from app.core.valkey.config import ValkeyConfig
@@ -18,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 class ValkeyHealth:
     """
-    Health checks for Redis including:
+    Health checks for Valkey including:
     - Connection health
     - Performance metrics
     - Circuit breaker status
@@ -31,15 +34,15 @@ class ValkeyHealth:
         self.cache_ttl = timedelta(seconds=30)
 
     async def check_connection(self) -> bool:
-        """Check basic Redis connectivity."""
+        """Check basic Valkey connectivity."""
         try:
             return await self.client.ping()
         except Exception as e:
-            logger.error(f"Redis connection check failed: {e}")
+            logger.error(f"Valkey connection check failed: {e}")
             return False
 
     async def check_performance(self) -> dict:
-        """Check Redis performance metrics."""
+        """Check Valkey performance metrics."""
         try:
             info = await self.client.info()
             return {
@@ -48,7 +51,7 @@ class ValkeyHealth:
                 "connected_clients": info.get("connected_clients", 0),
             }
         except Exception as e:
-            logger.error(f"Redis performance check failed: {e}")
+            logger.error(f"Valkey performance check failed: {e}")
             return {}
 
     async def get_health_status(self) -> JSONResponse:
@@ -83,8 +86,8 @@ class ValkeyHealth:
 valkey_health = ValkeyHealth()
 
 
-@router.get("/health/redis")
+@router.get("/health/valkey")
 @service_rate_limit
 async def valkey_health_check():
-    """Endpoint for Redis health c  hecks."""
+    """Endpoint for Valkey health checks."""
     return await valkey_health.get_health_status()

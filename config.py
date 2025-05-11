@@ -1,5 +1,5 @@
 """
-Redis configuration settings with timeout and performance parameters.
+Valkey configuration settings with timeout and performance parameters.
 """
 
 # Import settings
@@ -8,11 +8,12 @@ from app.core.config import settings
 
 class ValkeyConfig:
     """
-    Production-grade configuration for Valkey (Redis) client.
+    Production-grade configuration for Valkey async client, following best practices from valkey-py docs.
+    - Supports protocol=3 (RESP3), decode_responses, and advanced Valkey options.
     Follows best practices for distributed caching, sharding, locking, retry/backoff, SSL, and monitoring.
     See _docs/best_practices for rationale and advanced usage.
 
-    Shared config values (sourced from REDIS_*) are compatible with both legacy Redis and Valkey clients.
+    Shared config values (sourced from VALKEY_*) are compatible with both legacy Valkey clients.
     Valkey-only features use VAPI_* environment variables for advanced configuration.
     """
 

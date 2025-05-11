@@ -5,15 +5,16 @@ Production-grade Valkey sharding tests with:
 - Edge case testing
 - Monitoring integration
 """
-import pytest
-import logging
-from unittest.mock import patch, MagicMock
-from datetime import datetime
 import asyncio
+import logging
+from datetime import datetime
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from app.core.valkey.client import client as valkey_client
 from app.core.valkey.config import ValkeyConfig
-from app.core.monitoring.metrics import record_metrics
+from app.core.valkey.metrics import record_metrics
 
 logger = logging.getLogger(__name__)
 
