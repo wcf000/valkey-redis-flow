@@ -38,28 +38,47 @@ tracer = trace.get_tracer(__name__)
 logger = logging.getLogger(__name__)
 
 
+import asyncio
+
 class ValkeyCache:
     """
     Async wrapper for VALKEY cache operations. Provides get, set, delete, and composite cache methods.
     Reuses the core async functions for all logic.
     """
     def __init__(self, client=valkey_client):
+        # Accepts either a ValkeyClient (wrapper) or a raw async client
         self._client = client
 
-    async def get(self, key: str, default: Any = None) -> Any:
-        return await get_cached_result(key, default)
+    async def _get_raw_client(self):
+        # If self._client is a ValkeyClient, get the underlying async client
+        if hasattr(self._client, 'get_client') and callable(self._client.get_client):
+            return await self._client.get_client()
+        return self._client
 
-    async def set(self, key: str, value: Any, expire_seconds: int | None = None) -> None:
-        await self._client.set(key, value, expire_seconds)
+    async def get(self, key: str, default: Any = None) -> Any:
+        raw_client = await self._get_raw_client()
+        value = await raw_client.get(key)
+        if value is None:
+            return default
+        if isinstance(value, bytes):
+            return value.decode('utf-8')
+        return value
+
+    async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
+        raw_client = await self._get_raw_client()
+        await raw_client.set(key, value, ex=ttl)
 
     async def delete(self, key: str) -> bool:
-        return await invalidate_cache_key(key)
+        raw_client = await self._get_raw_client()
+        result = await raw_client.delete(key)
+        return bool(result)
 
-    async def get_or_set(self, key: str, func: Callable[[], Any], expire_seconds: int | None = None) -> Any:
-        return await get_or_set_cache(key, func, expire_seconds)
+    async def get_or_set(self, key: str, func: Callable[[], Any], ttl: int | None = None) -> Any:
+        # This still uses the global valkey_client, but you may want to refactor similarly
+        return await get_or_set_cache(key, func, ttl)
 
-    def cache_result(self, expire_seconds: int | None = None, key_prefix: str = ""):
-        return cache_result(expire_seconds, key_prefix)
+    def cache_result(self, ttl: int | None = None, key_prefix: str = ""):
+        return cache_result(ttl, key_prefix)
 
 
 async def get_cached_result(key: str, default: Any = None) -> Any:
@@ -118,14 +137,14 @@ async def invalidate_cache_key(key: str) -> bool:
 
 
 async def get_or_set_cache(
-    key: str, func: Callable[[], Any], expire_seconds: int | None = None
+    key: str, func: Callable[[], Any], ttl: int | None = None
 ) -> Any:
     """
     Get a value from VALKEY, or compute and store it if not found.
     Args:
         key: The cache key to retrieve or store
         func: Function to call if the key is not in the cache
-        expire_seconds: Optional cache expiration in seconds
+        ttl: Optional cache expiration (Time To Live) in seconds
     Returns:
         The cached or computed value
     """
@@ -139,8 +158,8 @@ async def get_or_set_cache(
                 return value
             get_valkey_cache_misses().inc()
             record_valkey_cache_miss()
-            result = func()
-            await valkey_client.set(key, result, expire_seconds)
+            result = await func() if asyncio.iscoroutinefunction(func) else func()
+            await valkey_client.set(key, result, ex=ttl)
             get_valkey_cache_sets().inc()
             record_valkey_cache_set()
             return result
@@ -152,11 +171,11 @@ async def get_or_set_cache(
             raise
 
 
-def cache_result(expire_seconds: int | None = None, key_prefix: str = ""):
+def cache_result(ttl: int | None = None, key_prefix: str = ""):
     """
     Decorator that caches the result of a function based on its arguments using VALKEY.
     Args:
-        expire_seconds: Optional cache expiration in seconds
+        ttl: Optional cache expiration (Time To Live) in seconds
         key_prefix: Optional prefix for the cache key
     Returns:
         Decorated function that uses VALKEY caching
@@ -172,7 +191,7 @@ def cache_result(expire_seconds: int | None = None, key_prefix: str = ""):
             if value is not None:
                 return value
             result = await func(*args, **kwargs)
-            await valkey_client.set(key, result, expire_seconds)
+            await valkey_client.set(key, result, ex=ttl)
             return result
 
         return wrapper

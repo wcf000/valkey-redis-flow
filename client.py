@@ -62,7 +62,8 @@ class ValkeyLock:
         async with ValkeyLock(client, name, timeout=5):
             # critical section
     """
-    def __init__(self, client, name: str, timeout: float | None = None, sleep: float = 0.1, blocking: bool = True, blocking_timeout: float | None = None, thread_local: bool = True):
+    def __init__(self, client, name: str, timeout: float | None = None, sleep: float = 0.1, blocking: bool = True, blocking_timeout: float | None = None, thread_local: bool = False):
+        # thread_local=False to avoid _thread._local issues in async
         self._lock = client._client.lock(
             name,
             timeout=timeout,
@@ -252,7 +253,8 @@ class ValkeyClient:
                 span.set_attribute("db.system", "valkey")
                 span.set_attribute("db.operation", "get")
                 span.set_attribute("db.redis.key", key)
-                value = await (await self.get_client()).get(key, timeout=timeout)
+                # Remove 'timeout' from direct call to backend client
+                value = await (await self.get_client()).get(key)
                 span.set_status(StatusCode.OK)
                 return json.loads(value) if value else None
 
@@ -276,8 +278,9 @@ class ValkeyClient:
                 span.set_attribute("db.operation", "set")
                 span.set_attribute("db.redis.key", key)
                 span.set_attribute("db.redis.ttl", ex or 0)
+                # Remove 'timeout' from direct call to backend client
                 result = await (await self.get_client()).set(
-                    key, json.dumps(value), ex=ex, timeout=timeout
+                    key, json.dumps(value), ex=ex
                 )
                 span.set_status(StatusCode.OK)
                 return result
