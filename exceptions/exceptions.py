@@ -5,9 +5,9 @@ Defines:
 - log_and_raise_valkey_exception utility
 - handle_valkey_exceptions async utility
 """
-
 from fastapi import HTTPException
 from prometheus_client import Counter
+from valkey import ValkeyError
 from valkey.exceptions import (
     AskError,
     AuthenticationError,

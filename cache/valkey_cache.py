@@ -22,20 +22,44 @@ from app.core.grafana.metrics import (
     record_valkey_cache_miss,
     record_valkey_cache_set,
 )
-from app.core.prometheus.metrics import (
-    VALKEY_CACHE_DELETES,
-    VALKEY_CACHE_ERRORS,
-    VALKEY_CACHE_HITS,
-    VALKEY_CACHE_MISSES,
-    VALKEY_CACHE_SETS,
+from app.core.valkey_core.metrics import (
+    get_valkey_cache_deletes,
+    get_valkey_cache_errors,
+    get_valkey_cache_hits,
+    get_valkey_cache_misses,
+    get_valkey_cache_sets,
 )
 from app.core.telemetry.client import TelemetryClient
-from app.core.valkey.client import client as valkey_client
+from app.core.valkey_core.client import client as valkey_client
 
 telemetry = TelemetryClient(service_name="valkey_cache")
 
 tracer = trace.get_tracer(__name__)
 logger = logging.getLogger(__name__)
+
+
+class ValkeyCache:
+    """
+    Async wrapper for VALKEY cache operations. Provides get, set, delete, and composite cache methods.
+    Reuses the core async functions for all logic.
+    """
+    def __init__(self, client=valkey_client):
+        self._client = client
+
+    async def get(self, key: str, default: Any = None) -> Any:
+        return await get_cached_result(key, default)
+
+    async def set(self, key: str, value: Any, expire_seconds: int | None = None) -> None:
+        await self._client.set(key, value, expire_seconds)
+
+    async def delete(self, key: str) -> bool:
+        return await invalidate_cache_key(key)
+
+    async def get_or_set(self, key: str, func: Callable[[], Any], expire_seconds: int | None = None) -> Any:
+        return await get_or_set_cache(key, func, expire_seconds)
+
+    def cache_result(self, expire_seconds: int | None = None, key_prefix: str = ""):
+        return cache_result(expire_seconds, key_prefix)
 
 
 async def get_cached_result(key: str, default: Any = None) -> Any:
@@ -52,15 +76,15 @@ async def get_cached_result(key: str, default: Any = None) -> Any:
         try:
             value = await valkey_client.get(key)
             if value is None:
-                VALKEY_CACHE_MISSES.inc()
+                get_valkey_cache_misses().inc()
                 record_valkey_cache_miss()
                 return default
-            VALKEY_CACHE_HITS.inc()
+            get_valkey_cache_hits().inc()
             record_valkey_cache_hit()
             return value
         except Exception as e:
             # Record cache error
-            VALKEY_CACHE_ERRORS.inc()
+            get_valkey_cache_errors().inc()
             record_valkey_cache_error()
             logger.warning(f"Error retrieving from VALKEY cache: {str(e)}")
             return default
@@ -79,15 +103,15 @@ async def invalidate_cache_key(key: str) -> bool:
         try:
             result = bool(await valkey_client.delete(key))
             if result:
-                VALKEY_CACHE_DELETES.inc()
+                get_valkey_cache_deletes().inc()
                 record_valkey_cache_delete()
             else:
-                VALKEY_CACHE_MISSES.inc()
+                get_valkey_cache_misses().inc()
                 record_valkey_cache_miss()
             return result
         except Exception as e:
             # Record cache error
-            VALKEY_CACHE_ERRORS.inc()
+            get_valkey_cache_errors().inc()
             record_valkey_cache_error()
             logger.warning(f"Error invalidating VALKEY cache: {str(e)}")
             return False
@@ -110,19 +134,19 @@ async def get_or_set_cache(
         try:
             value = await valkey_client.get(key)
             if value is not None:
-                VALKEY_CACHE_HITS.inc()
+                get_valkey_cache_hits().inc()
                 record_valkey_cache_hit()
                 return value
-            VALKEY_CACHE_MISSES.inc()
+            get_valkey_cache_misses().inc()
             record_valkey_cache_miss()
             result = func()
             await valkey_client.set(key, result, expire_seconds)
-            VALKEY_CACHE_SETS.inc()
+            get_valkey_cache_sets().inc()
             record_valkey_cache_set()
             return result
         except Exception as e:
             # Record cache error
-            VALKEY_CACHE_ERRORS.inc()
+            get_valkey_cache_errors().inc()
             record_valkey_cache_error()
             logger.error(f"Error computing or caching result in VALKEY: {str(e)}")
             raise

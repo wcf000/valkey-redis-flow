@@ -1,10 +1,10 @@
 """
-* Token Bucket Rate Limiter using Redis
+* Token Bucket Rate Limiter using VALKEY
 * DRY, SOLID, CI/CD, and type safety best practices
 """
 import logging
 import time
-from app.core.redis.redis_cache import RedisCache
+from app.core.valkey_core.client import client as valkey_client
 
 # ! Uses atomic Lua script for token refill and consume
 # todo: Add fail-open logic and Prometheus metrics if needed
@@ -31,10 +31,10 @@ else
   redis.call('EXPIRE', key, interval * 2)
   return 0
 end
-"""
+""" 
 
 async def is_allowed_token_bucket(
-    cache: RedisCache, key: str, capacity: int, refill_rate: int, interval: int
+    key: str, capacity: int, refill_rate: int, interval: int
 ) -> bool:
     """
     * Token Bucket Rate Limiter
@@ -48,7 +48,7 @@ async def is_allowed_token_bucket(
     """
     try:
         now = int(time.time())
-        allowed = await cache._client.eval(
+        allowed = await valkey_client.eval(
             TOKEN_BUCKET_LUA,
             1,
             key,
@@ -59,6 +59,6 @@ async def is_allowed_token_bucket(
         )
         return allowed == 1
     except Exception as e:
-        # ! Fail-open: If Redis is unavailable, allow the event and log a warning
-        logging.warning(f"[token_bucket] Redis unavailable, allowing event (fail-open): {e}")
+        # ! Fail-open: If VALKEY is unavailable, allow the event and log a warning
+        logging.warning(f"[token_bucket] VALKEY unavailable, allowing event (fail-open): {e}")
         return True

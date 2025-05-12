@@ -4,14 +4,14 @@
 """
 import logging
 import time
-from app.core.redis.redis_cache import RedisCache
+from app.core.valkey_core.client import client as valkey_client
 
 # ! Debounce: only allow event after interval of inactivity
 # todo: Add fail-open logic and Prometheus metrics if needed
 
 
 async def is_allowed_debounce(
-    cache: RedisCache, key: str, interval: int
+    key: str, interval: int
 ) -> bool:
     """
     * Debounce: only allow event after interval of inactivity
@@ -23,13 +23,13 @@ async def is_allowed_debounce(
     """
     now = int(time.time())
     try:
-        ttl = await cache._client.ttl(key)
+        ttl = await valkey_client.ttl(key)
         if ttl > 0:
             return False
-        await cache._client.set(key, now, ex=interval)
+        await valkey_client.set(key, now, ex=interval)
         return True
     except Exception as e:
         # ! Fail-open: If Redis is unavailable, allow the event and log a warning
         import logging
-        logging.warning(f"[debounce] Redis unavailable, allowing event (fail-open): {e}")
+        logging.warning(f"[debounce] VALKEY unavailable, allowing event (fail-open): {e}")
         return True

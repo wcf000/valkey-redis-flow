@@ -13,18 +13,25 @@ from datetime import datetime, timedelta
 from fastapi import HTTPException, status
 from prometheus_client import Counter, Gauge
 
-from app.core.third_party_integrations.supabase_home.functions.auth import (
-    SupabaseAuthService,
-)
-from app.core.valkey.client import ValkeyClient
+# from app.core.third_party_integrations.supabase_home.functions.auth import SupabaseAuthService  # ! Deprecated: Use async get_auth_service() instead
+from app.core.third_party_integrations.supabase_home.client import get_supabase_client
+from app.core.third_party_integrations.supabase_home.app import SupabaseAuthService
+
+async def get_auth_service():
+    client = await get_supabase_client()
+    service = SupabaseAuthService(client)
+    user = await service.get_current_user() if hasattr(service.get_current_user, '__await__') else service.get_current_user()
+    return user
+
+from app.core.valkey_core.client import client as valkey_client
 
 logger = logging.getLogger(__name__)
 
 # Initialize Redis client
-client = ValkeyClient()
+client = valkey_client
 
-# Initialize auth service
-auth_service = SupabaseAuthService()
+# ! Deprecated: Use async get_auth_service() instead of direct SupabaseAuthService instantiation
+# auth_service = SupabaseAuthService()
 
 # Prometheus Metrics
 RATE_LIMIT_REQUESTS = Counter(

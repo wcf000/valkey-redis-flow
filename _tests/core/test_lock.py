@@ -3,7 +3,7 @@ Tests for Valkey distributed lock functionality.
 """
 import pytest
 
-from app.core.valkey.client import client as valkey_client
+from app.core.valkey_core.client import client as valkey_client
 
 
 @pytest.mark.asyncio

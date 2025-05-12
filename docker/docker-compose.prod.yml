@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  valkey:
+    image: valkey/valkey:latest
+    container_name: valkey-prod
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey-data:/data
+    command: >
+      valkey-server --appendonly yes
+      --requirepass ${VALKEY_PASSWORD:-${REDIS_PASSWORD:-valkey_password}}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --port ${VALKEY_PORT:-${REDIS_PORT:-6379}}
+      --databases ${VALKEY_DATABASES:-${REDIS_DATABASES:-16}}
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD:-$REDIS_PASSWORD}", "-p", "${VALKEY_PORT:-$REDIS_PORT}", "ping"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    environment:
+      - VALKEY_PASSWORD=${VALKEY_PASSWORD:-${REDIS_PASSWORD:-valkey_password}}
+      - VALKEY_PORT=${VALKEY_PORT:-${REDIS_PORT:-6379}}
+      - VALKEY_DATABASES=${VALKEY_DATABASES:-${REDIS_DATABASES:-16}}
+
+volumes:
+  valkey-data:
+    driver: local

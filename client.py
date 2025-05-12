@@ -25,11 +25,11 @@ from valkey.backoff import (
     DecorrelatedJitterBackoff,
     ExponentialBackoff,
 )
-from valkey.exceptions import TimeoutError, ValkeyError
 from valkey.retry import Retry
+from app.core.valkey_core.exceptions.exceptions import TimeoutError, ValkeyError
 
-from app.core.valkey.config import ValkeyConfig
-from app.core.valkey.exceptions.exceptions import handle_valkey_exceptions
+from app.core.valkey_core.config import ValkeyConfig
+from app.core.valkey_core.exceptions.exceptions import handle_valkey_exceptions
 
 VALKEY_CLUSTER = ValkeyConfig.VALKEY_CLUSTER
 VALKEY_DB = ValkeyConfig.VALKEY_DB
@@ -339,7 +339,25 @@ class ValkeyClient:
             _action, logger=logger, endpoint="valkey.ttl"
         )
 
+    async def flushdb(self):
+        """
+        Flush the current Valkey database (for test isolation).
+        """
+        async def _action():
+            with tracer.start_as_current_span("valkey.flushdb") as span:
+                span.set_attribute("db.system", "valkey")
+                span.set_attribute("db.operation", "flushdb")
+                client = await self.get_client()
+                result = await client.flushdb()
+                span.set_status(StatusCode.OK)
+                return result
+
+        return await handle_valkey_exceptions(
+            _action, logger=logger, endpoint="valkey.flushdb"
+        )
+
     async def exists(self, key: str, timeout: float = DEFAULT_COMMAND_TIMEOUT) -> bool:
+
         async def _action():
             with tracer.start_as_current_span("valkey.exists") as span:
                 span.set_attribute("db.system", "valkey")

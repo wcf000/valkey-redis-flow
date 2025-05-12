@@ -8,12 +8,11 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from valkey.asyncio import Valkey
 from valkey.exceptions import TimeoutError, ValkeyError
 
-from app.core.valkey.client import ValkeyClient
-from app.core.valkey.config import ValkeyConfig
-from app.core.valkey.limiting.rate_limit import service_rate_limit
+from app.core.valkey_core.client import client as valkey_client
+from app.core.valkey_core.config import ValkeyConfig
+from app.core.valkey_core.limiting.rate_limit import service_rate_limit
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

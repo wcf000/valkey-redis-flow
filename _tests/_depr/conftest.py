@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.core.valkey.client import client as valkey_client
+from app.core.valkey_core.client import client as valkey_client
 from app.core.valkey.config import ValkeyConfig
 from app.core.valkey.rate_limit import check_rate_limit
 from app.core.valkey.valkey_cache import ValkeyCache

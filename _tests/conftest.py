@@ -5,11 +5,31 @@ Shared pytest fixtures and configuration for Valkey tests
 import asyncio
 
 # If you have a ValkeyCache or similar, import here
-# from app.core.valkey.cache.valkey_cache import ValkeyCache
+# from app.core.valkey_core.cache.valkey_cache import ValkeyCache
 # No need for Valkey server startup logic here; assume test environment provides Valkey.
 from unittest.mock import patch
 
 import pytest
+import socket
+import subprocess
+import time
+
+@pytest.fixture(scope="session", autouse=True)
+def ensure_valkey_server():
+    """Ensure Valkey/Redis server is running on localhost:6379 or 127.0.0.1:6379 before tests."""
+    import socket
+    def is_port_open(host, port):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            try:
+                s.connect((host, port))
+                return True
+            except Exception:
+                return False
+    running = is_port_open("localhost", 6379) or is_port_open("127.0.0.1", 6379)
+    if not running:
+        raise RuntimeError("No Redis/Valkey server running on localhost:6379. Please start docker-redis-1.")
+    yield
 
 # --- Real async Valkey client fixture for integration tests ---
 # If using pytest-asyncio, import it here if needed
@@ -17,10 +37,23 @@ import pytest_asyncio
 from valkey.asyncio import Valkey
 from valkey.exceptions import TimeoutError, ValkeyError
 
-from app.core.valkey.cache.valkey_cache import ValkeyCache
-from app.core.valkey.client import client as valkey_client
-from app.core.valkey.config import ValkeyConfig
-from app.core.valkey.limiting.rate_limit import check_rate_limit
+from app.core.valkey_core.config import ValkeyConfig
+
+@pytest_asyncio.fixture
+async def redis_client():
+    """
+    Provides a real Valkey async client for integration tests.
+    """
+    client = Valkey(host=ValkeyConfig.VALKEY_HOST, port=ValkeyConfig.VALKEY_PORT, db=ValkeyConfig.VALKEY_DB)
+    try:
+        yield client
+    finally:
+        await client.close()
+
+from app.core.valkey_core.cache.valkey_cache import ValkeyCache
+from app.core.valkey_core.client import client as valkey_client
+from app.core.valkey_core.config import ValkeyConfig
+from app.core.valkey_core.limiting.rate_limit import check_rate_limit
 
 
 @pytest_asyncio.fixture(autouse=True)

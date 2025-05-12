@@ -3,7 +3,7 @@ Tests for async retry decorator and retry logic.
 """
 import pytest
 import asyncio
-from app.core.valkey.retry import async_retry
+from app.core.valkey_core.retry import async_retry
 
 @pytest.mark.asyncio
 async def test_retry_success_on_second_attempt():

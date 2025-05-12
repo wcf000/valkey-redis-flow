@@ -1,38 +1,36 @@
 """
-Redis cache consistency tests
+Valkey cache consistency tests
 """
 import asyncio
+from unittest.mock import patch
+
 import pytest
 
-from app.core.redis.redis_cache import RedisCache
-
+from app.core.valkey.valkey_cache import ValkeyCache
 
 
 @pytest.mark.asyncio
-async def test_cache_invalidation(redis_client):
+async def test_cache_invalidation():
     """Test cache invalidation works"""
-    cache = RedisCache(redis_client)
+    cache = ValkeyCache()
     await cache.set("test_key", "value", ttl=10)
-    await cache.delete("test_key")
+    await cache.invalidate("test_key")
     assert await cache.get("test_key") is None
 
 @pytest.mark.asyncio
-async def test_ttl_behavior(redis_client):
+async def test_ttl_behavior():
     """Verify TTL expiration works"""
-    cache = RedisCache(redis_client)
+    cache = ValkeyCache()
     await cache.set("ttl_key", "value", ttl=1)
     assert await cache.get("ttl_key") == "value"
     await asyncio.sleep(1.1)
     assert await cache.get("ttl_key") is None
 
 @pytest.mark.asyncio
-async def test_race_conditions(redis_client):
+async def test_race_conditions():
     """Test cache stampede protection"""
-    cache = RedisCache(redis_client)
-    # * Use a real async function for value_fn
-    async def value_fn():
-        return "value"
+    cache = ValkeyCache()
     results = await asyncio.gather(
-        *[cache.get_or_set("race_key", value_fn) for _ in range(10)]
+        *[cache.get_or_set("race_key", lambda: "value") for _ in range(10)]
     )
     assert all(r == "value" for r in results)

@@ -1,20 +1,19 @@
 """
-* Sliding Window Rate Limiter using Redis
+* Sliding Window Rate Limiter using VALKEY
 * DRY, SOLID, CI/CD, and type safety best practices
 """
 import logging
 import time
-from app.core.redis.redis_cache import RedisCache
+from app.core.valkey_core.client import client as valkey_client
 
-# ! Uses Redis sorted sets for timestamped requests
+# ! Uses VALKEY sorted sets for timestamped requests
 
 async def is_allowed_sliding_window(
-    cache: RedisCache, key: str, limit: int, window: int
-) -> bool:
+    key: str, limit: int, window: int
+) -> bool:  
     """
     * Sliding Window Rate Limiter (DI version)
     Args:
-        cache (RedisCache): Injected RedisCache instance
         key (str): Unique identifier for the rate limit (user ID, IP, etc.)
         limit (int): Max allowed requests per window
         window (int): Window size in seconds
@@ -25,7 +24,7 @@ async def is_allowed_sliding_window(
     try:
         now = int(time.time())
         min_score = now - window
-        p = cache._client.pipeline()
+        p = valkey_client.pipeline()
         p.zremrangebyscore(key, 0, min_score)
         p.zadd(key, {str(now): now})
         p.zcard(key)
@@ -34,6 +33,6 @@ async def is_allowed_sliding_window(
         return count <= limit
     except Exception as e:
         import logging
-        logging.warning(f"[sliding_window] Redis unavailable, allowing event (fail-open): {e}")
+        logging.warning(f"[sliding_window] VALKEY unavailable, allowing event (fail-open): {e}")
         return True
 

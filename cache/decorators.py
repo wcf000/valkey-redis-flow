@@ -9,7 +9,7 @@ from typing import Any, TypeVar
 
 from prometheus_client import Counter
 
-from app.core.valkey.client import ValkeyClient
+from app.core.valkey_core.client import ValkeyClient
 from app.core.valkey.config import ValkeyConfig
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ def cache(
         async def wrapper(*args, **kwargs):
             nonlocal client
             if client is None:
-                from app.core.valkey.client import client as default_client
+                from app.core.valkey_core.client import client as default_client
 
                 client = default_client
             valkey_client = await client.get_client()

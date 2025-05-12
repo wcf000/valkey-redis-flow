@@ -7,18 +7,18 @@ import random
 from collections.abc import Callable, Coroutine
 from typing import Any, TypeVar
 
-from prometheus_client import Counter
-
-from app.core.valkey.client import ValkeyClient
-from app.core.valkey.config import ValkeyConfig
+from app.core.valkey_core.metrics import (
+    get_valkey_cache_deletes,
+    get_valkey_cache_errors,
+    get_valkey_cache_hits,
+    get_valkey_cache_misses,
+    get_valkey_cache_sets,
+)
+from app.core.valkey_core.client import client as valkey_client
+from app.core.valkey_core.config import ValkeyConfig
 
 logger = logging.getLogger(__name__)
 
-# Metrics
-CACHE_HITS = Counter("cache_hits", "Number of cache hits", ["key_pattern"])
-CACHE_INVALIDATIONS = Counter(
-    "cache_invalidations", "Number of cache invalidations", ["pattern"]
-)
 
 
 async def get_valkey_client() -> ValkeyClient:
@@ -71,7 +71,7 @@ def cache(
 
             cached = await client.get(key, timeout=ValkeyConfig.VALKEY_TIMEOUT)
             if cached is not None:
-                CACHE_HITS.labels(key_pattern=key).inc()
+                get_valkey_cache_hits().inc()
                 return cached
 
             logger.debug(f"Cache miss for {key}")

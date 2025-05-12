@@ -6,9 +6,9 @@ import logging
 from unittest.mock import patch
 
 import pytest
-from valkey.exceptions import TimeoutError
+from valkey_core.exceptions import TimeoutError
 
-from app.core.valkey.client import client as valkey_client
+from app.core.valkey_core.client import client as valkey_client
 
 logger = logging.getLogger(__name__)
 

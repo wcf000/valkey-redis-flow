@@ -70,7 +70,7 @@ async def cache_lookup(key: str):
 The singleton client is async-ready and supports connection pooling, sharding/cluster, circuit breaking, and OpenTelemetry tracing.
 
 ```python
-from app.core.valkey.client import client  # Singleton instance
+from app.core.valkey_core.client import client  # Singleton instance
 
 # Async usage
 valkey = await client.get_client()
@@ -191,7 +191,7 @@ You can use the built-in lock via the `ValkeyClient.lock()` context manager. Thi
 
 #### Basic Example
 ```python
-from app.core.valkey.client import client
+from app.core.valkey_core.client import client
 
 async def critical_section():
     async with client.lock("my:lock:key", timeout=10):

@@ -35,7 +35,8 @@ class ValkeyConfig:
     VALKEY_CLUSTER_MODE = getattr(settings, "VAPI_CLUSTER_MODE", False)
 
     # --- Connection (shared, REDIS_*) ---
-    VALKEY_HOST = getattr(settings, "REDIS_HOST", "localhost")
+    # Use 127.0.0.1 as the default host for local development to ensure compatibility with Docker and Redis config
+    VALKEY_HOST = getattr(settings, "REDIS_HOST", "127.0.0.1")
     VALKEY_PORT = getattr(settings, "REDIS_PORT", 6379)
     VALKEY_DB = getattr(settings, "REDIS_DB", 0)
     VALKEY_POOL_SIZE = getattr(settings, "REDIS_POOL_SIZE", 20)
