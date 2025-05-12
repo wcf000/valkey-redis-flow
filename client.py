@@ -74,16 +74,13 @@ class ValkeyLock:
         )
 
     async def __aenter__(self):
-        # Valkey's lock acquire is blocking, so run in executor if needed
-        loop = asyncio.get_event_loop()
-        acquired = await loop.run_in_executor(None, self._lock.acquire)
+        acquired = await self._lock.acquire()
         if not acquired:
             raise TimeoutError("Could not acquire Valkey lock")
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._lock.release)
+        await self._lock.release()
 
 
 class ValkeyClient:

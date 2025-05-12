@@ -124,6 +124,37 @@ This document summarizes the debugging strategies, issues encountered, and solut
 
 ---
 
+## Debugging Valkey Lock Test Failures
+
+### Common Issues
+- **Wrong Exception Type:**
+  - Valkey's async lock raises `valkey.exceptions.TimeoutError`, not Python's built-in `TimeoutError`. Always import and use the correct exception in your tests:
+    ```python
+    from valkey.exceptions import TimeoutError as ValkeyTimeoutError
+    with pytest.raises(ValkeyTimeoutError):
+        async with valkey_client.lock(...):
+            ...
+    ```
+- **Thread-Local/Async Context Errors:**
+  - Never use `run_in_executor` for lock acquire/release in async code. Always use native async methods:
+    ```python
+    acquired = await self._lock.acquire()
+    await self._lock.release()
+    ```
+- **Prometheus Metrics Registration:**
+  - If you see `Duplicated timeseries in CollectorRegistry`, disable metrics during tests:
+    ```python
+    from app.core.valkey_core.config import ValkeyConfig
+    ValkeyConfig.VALKEY_METRICS_ENABLED = False
+    ```
+
+### Edge Cases & Guidance
+- If Valkey changes its exception classes or lock API, update your test imports and error handling accordingly.
+- Always ensure test fixtures return a fully initialized async client, not just a wrapper or function.
+- If you see lock acquisition failures, ensure no other test or process is holding the same lock key.
+
+---
+
 ## References
 - [pytest-asyncio docs](https://pytest-asyncio.readthedocs.io/en/latest/)
 - [Python asyncio event loop policy docs](https://docs.python.org/3/library/asyncio-policy.html)
@@ -131,4 +162,4 @@ This document summarizes the debugging strategies, issues encountered, and solut
 
 ---
 
-*Last updated: 2025-05-11*
+*Last updated: 2025-05-12*
