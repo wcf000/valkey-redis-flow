@@ -84,6 +84,77 @@ class ValkeyLock:
 
 
 class ValkeyClient:
+    # ...
+    async def scan(self, match: str = "*") -> list[str]:
+        """
+        Asynchronously scan for all keys matching the pattern.
+        Uses the underlying Redis/Valkey SCAN command.
+        """
+        cursor = 0
+        keys = []
+        while True:
+            cursor, batch = await self._client.scan(cursor=cursor, match=match)
+            keys.extend(batch)
+            if cursor == 0:
+                break
+        return keys
+
+    async def lrem(self, key: str, count: int, value: str) -> int:
+        """
+        Remove elements from a list (like Redis LREM).
+        """
+        async def _action():
+            with tracer.start_as_current_span("valkey.lrem") as span:
+                span.set_attribute("db.system", "valkey")
+                span.set_attribute("db.operation", "lrem")
+                span.set_attribute("db.redis.key", key)
+                result = await (await self.get_client()).lrem(key, count, value)
+                span.set_status(StatusCode.OK)
+                return result
+        return await handle_valkey_exceptions(_action, logger=logger, endpoint="valkey.lrem")
+
+    async def rpush(self, key: str, value: str) -> int:
+        """
+        Append a value to a list (like Redis RPUSH).
+        """
+        async def _action():
+            with tracer.start_as_current_span("valkey.rpush") as span:
+                span.set_attribute("db.system", "valkey")
+                span.set_attribute("db.operation", "rpush")
+                span.set_attribute("db.redis.key", key)
+                result = await (await self.get_client()).rpush(key, value)
+                span.set_status(StatusCode.OK)
+                return result
+        return await handle_valkey_exceptions(_action, logger=logger, endpoint="valkey.rpush")
+
+    async def llen(self, key: str) -> int:
+        """
+        Get the length of a list (like Redis LLEN).
+        """
+        async def _action():
+            with tracer.start_as_current_span("valkey.llen") as span:
+                span.set_attribute("db.system", "valkey")
+                span.set_attribute("db.operation", "llen")
+                span.set_attribute("db.redis.key", key)
+                result = await (await self.get_client()).llen(key)
+                span.set_status(StatusCode.OK)
+                return result
+        return await handle_valkey_exceptions(_action, logger=logger, endpoint="valkey.llen")
+
+    async def rpop(self, key: str) -> str | None:
+        """
+        Remove and get the last element in a list (like Redis RPOP).
+        """
+        async def _action():
+            with tracer.start_as_current_span("valkey.rpop") as span:
+                span.set_attribute("db.system", "valkey")
+                span.set_attribute("db.operation", "rpop")
+                span.set_attribute("db.redis.key", key)
+                result = await (await self.get_client()).rpop(key)
+                span.set_status(StatusCode.OK)
+                return result
+        return await handle_valkey_exceptions(_action, logger=logger, endpoint="valkey.rpop")
+
     # ... existing code ...
     @property
     def conn(self):
