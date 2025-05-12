@@ -50,6 +50,53 @@ This document summarizes the debugging strategies, issues encountered, and solut
 
 ---
 
+## Debugging Circuit Breaker & Retry/Backoff Tests
+
+### Problem: Only `test_valkey_retry_success_on_second_attempt` Fails
+
+- **Symptoms:**
+  - `test_valkey_retry_and_backoff` and `test_valkey_timeout_error_classification` pass.
+  - `test_valkey_retry_success_on_second_attempt` fails with `valkey.exceptions.TimeoutError: fail once` instead of returning a value on the second attempt.
+
+- **Root Cause:**
+  - The retry/backoff logic in the Valkey client is not triggered in the test because the `mock_cluster_client.get` method is patched directly, and the retry logic is implemented in the underlying Valkey/ValkeyCluster client, not in the wrapper or the mock.
+  - When using `AsyncMock`, the retry/backoff logic is bypassed because the mock does not implement retries—it just calls your side effect function.
+  - Therefore, when the mock raises `TimeoutError` on the first call, the wrapper receives it and (with `wrap_http_exception=False`) re-raises it immediately, without retrying.
+
+- **How to Fix for Unit Tests:**
+  - **Option 1:** Test the retry/backoff logic separately, not via patching the underlying client with a mock. Instead, inject a real retrying client or test the retry decorator/factory directly.
+  - **Option 2:** Patch at a higher level, or use an integration test with a real Valkey instance that can simulate failures.
+  - **Option 3:** If you want to test the wrapper's retry logic, patch the retry/backoff mechanism itself, or use a custom mock that tracks call count and simulates retry.
+
+- **Quick Fix for This Test:**
+  - If you only want to verify that a retry is attempted, use a counter in your side effect and assert that the function is called more than once.
+  - If you want to test the full retry/backoff integration, avoid mocking the underlying `.get` method and instead simulate failures at the network or Redis/Valkey level.
+
+#### Example (for current test):
+```python
+attempts = {"count": 0}
+async def flaky_get(*args, **kwargs):
+    if attempts["count"] < 1:
+        attempts["count"] += 1
+        raise TimeoutError("fail once")
+    return b"42"
+mock_cluster_client = AsyncMock()
+mock_cluster_client.get.side_effect = flaky_get
+monkeypatch.setattr(valkey_client, "_get_cluster_client", AsyncMock(return_value=mock_cluster_client))
+monkeypatch.setattr(valkey_client, "get_client", AsyncMock(return_value=mock_cluster_client))
+result = await valkey_client.get("test_key", wrap_http_exception=False)
+assert result == 42 or result == b"42"
+assert attempts["count"] == 1  # Ensure retry was attempted
+```
+- If this still fails, the retry logic is not being exercised by the mock. Consider writing a dedicated test for the retry decorator/factory.
+
+### Takeaways
+- Mocking the underlying client disables real retry/backoff logic unless the retry is implemented in the wrapper.
+- For true retry/backoff tests, use a real backend or a custom test client that implements retries.
+- Always document what is actually being tested: the wrapper, the retry decorator, or the integration with the backend.
+
+---
+
 ## Common Issues Encountered
 
 ### 1. `RuntimeError: Event loop is closed`

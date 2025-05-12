@@ -49,7 +49,7 @@ import pytest
     (is_allowed_throttle, {"key": "test:throttle", "interval": 2}),
     (is_allowed_debounce, {"key": "test:debounce", "interval": 2}),
 ])
-async def test_algorithms_allow_and_block(algo_func, kwargs, redis_client):
+async def test_algorithms_allow_and_block(algo_func, kwargs, valkey_client):
     """
     Test that algorithms allow and block as expected.
     Sliding window is tested in a separate deterministic function.
@@ -151,7 +151,7 @@ async def test_algorithms_fail_open(algo_func, kwargs, valkey_path, monkeypatch)
     (is_allowed_throttle, {"key": "test:throttle", "interval": 2}),
     (is_allowed_debounce, {"key": "test:debounce", "interval": 2}),
 ])
-async def test_algorithms_allow_and_block_multiple(algo_func, kwargs, redis_client):
+async def test_algorithms_allow_and_block_multiple(algo_func, kwargs, valkey_client):
     # Generate a unique key per test run for isolation
     unique_key = f"{kwargs.get('key', 'test')}_{uuid.uuid4()}"
     if 'key' in kwargs:

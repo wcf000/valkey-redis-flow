@@ -59,26 +59,40 @@ return #keys
 """
 
 
-async def check_rate_limit(key: str, limit: int, window: int) -> bool:
+async def check_rate_limit(client, key: str, limit: int, window: int) -> bool:
     """
     Improved sliding window rate limiting using Redis sorted sets
     More accurate than fixed windows, better for burst protection
+    See debugging guide: app/core/valkey_core/_tests/_docs/debugging_tests.md
     """
     now = datetime.utcnow()
-    pipeline = client.pipeline()
+    # Defensive: handle None client gracefully (fail-closed)
+    if client is None:
+        logger.error(f"[check_rate_limit] Valkey client is None for key={key}. Failing closed.")
+        return False
+    redis = await client.aconn()
+    logger.debug(f"[check_rate_limit] Acquired async Valkey connection for key={key} at {now.isoformat()}.")
+    pipeline = await redis.pipeline()
+    if pipeline is None:
+        logger.error(f"[check_rate_limit] Valkey pipeline is None for key={key}. Failing closed.")
+        return False
+    logger.debug(f"[check_rate_limit] Pipeline acquired for key={key}. Proceeding with ZREMRANGEBYSCORE/ZCARD/ZADD/EXPIRE.")
 
     # Remove expired timestamps
-    pipeline.zremrangebyscore(key, 0, (now - timedelta(seconds=window)).timestamp())
+    await pipeline.zremrangebyscore(key, 0, (now - timedelta(seconds=window)).timestamp())
 
     # Count remaining requests
-    pipeline.zcard(key)
+    await pipeline.zcard(key)
 
     # Add current request
-    pipeline.zadd(key, {now.timestamp(): now.timestamp()})
-    pipeline.expire(key, window)
+    await pipeline.zadd(key, {now.timestamp(): now.timestamp()})
+    await pipeline.expire(key, window)
 
+    logger.debug(f"[check_rate_limit] Executing pipeline for key={key}.")
     _, count, _, _ = await pipeline.execute()
-    return count >= limit
+    logger.debug(f"[check_rate_limit] Pipeline executed for key={key}: count={count}, limit={limit}, window={window}")
+    # ! Allow if under limit, reject if at/above limit (sliding window logic)
+    return count < limit
 
 
 async def increment_rate_limit(identifier: str, endpoint: str, window: int = 60) -> int:

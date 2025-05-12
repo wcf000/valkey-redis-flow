@@ -241,7 +241,26 @@ class ValkeyClient:
             raise ConnectionError("Valkey connection failed")
         self._metrics_task = asyncio.create_task(self._update_metrics())
 
-    async def get(self, key: str, timeout: float = None) -> Any:
+    @staticmethod
+    def _maybe_json_decode(value: str | bytes) -> Any:
+        """
+        Safely decode JSON if value looks like JSON, else return as-is.
+        Handles bytes by decoding to str first.
+        """
+        if not value:
+            return None
+        if isinstance(value, bytes):
+            value = value.decode("utf-8")
+        v = value.strip()
+        # Accepts JSON primitives, objects, arrays
+        if v[:1] in ('"', '{', '[', 't', 'f', 'n') or v.replace('.', '', 1).isdigit():
+            try:
+                return json.loads(v)
+            except Exception:
+                pass
+        return value
+
+    async def get(self, key: str, timeout: float = None, wrap_http_exception: bool = True) -> Any:
         if timeout is None:
             timeout = ValkeyConfig.VALKEY_COMMAND_TIMEOUT
 
@@ -253,10 +272,10 @@ class ValkeyClient:
                 # Remove 'timeout' from direct call to backend client
                 value = await (await self.get_client()).get(key)
                 span.set_status(StatusCode.OK)
-                return json.loads(value) if value else None
+                return self._maybe_json_decode(value)
 
         return await handle_valkey_exceptions(
-            _action, logger=logger, endpoint="valkey.get"
+            _action, logger=logger, endpoint="valkey.get", wrap_http_exception=wrap_http_exception
         )
 
     async def set(
@@ -292,7 +311,8 @@ class ValkeyClient:
                 span.set_attribute("db.system", "valkey")
                 span.set_attribute("db.operation", "delete")
                 span.set_attribute("db.redis.keys", str(keys))
-                return await (await self.get_client()).delete(*keys, timeout=timeout)
+                # Remove 'timeout' from direct call to backend client (see debugging_tests.md)
+                return await (await self.get_client()).delete(*keys)
 
         return await handle_valkey_exceptions(
             _action, logger=logger, endpoint="valkey.delete"
@@ -403,6 +423,20 @@ class ValkeyClient:
 
         return await handle_valkey_exceptions(
             _action, logger=logger, endpoint="valkey.pubsub"
+        )
+
+    async def publish(self, channel: str, message: str):
+        """
+        Publish a message to a channel.
+        """
+        async def _action():
+            with tracer.start_as_current_span("valkey.publish") as span:
+                span.set_attribute("db.system", "valkey")
+                span.set_attribute("db.operation", "publish")
+                client = await self.get_client()
+                return await client.publish(channel, message)
+        return await handle_valkey_exceptions(
+            _action, logger=logger, endpoint="valkey.publish"
         )
 
     async def _update_metrics(self):

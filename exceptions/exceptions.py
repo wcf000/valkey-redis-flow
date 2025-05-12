@@ -112,6 +112,7 @@ async def handle_valkey_exceptions(
     current_user: dict | None = None,
     extra_context: dict | None = None,
     VALKEY_ERRORS_MAPPING: dict | None = None,
+    wrap_http_exception: bool = True,
 ):
     """
     Utility to wrap Valkey logic with robust exception-to-HTTP mapping, metrics, and logging (Prometheus).
@@ -133,7 +134,7 @@ async def handle_valkey_exceptions(
         extra_context: Optional dict for additional context (e.g., request_id).
         VALKEY_ERRORS_MAPPING: Optional dict mapping Valkey exceptions to HTTP response codes.
     Returns:
-        The result of func, or raises mapped HTTPException on error.
+        The result of func, or raises mapped HTTPException on error (if wrap_http_exception is True), otherwise raises the original exception.
     """
     if VALKEY_ERRORS_MAPPING is None:
         VALKEY_ERRORS_MAPPING = {
@@ -183,7 +184,10 @@ async def handle_valkey_exceptions(
         }
         if logger:
             logger.error(f"[Valkey] Exception at {endpoint}: {detail}")
-        raise HTTPException(status_code=status_code, detail=detail) from exc
+        if wrap_http_exception:
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+        else:
+            raise exc
     except Exception as exc:
         VALKEY_ERRORS.labels(error_type="UnhandledException").inc()
         detail = {
@@ -195,4 +199,7 @@ async def handle_valkey_exceptions(
         }
         if logger:
             logger.error(f"[Valkey] Unhandled exception at {endpoint}: {detail}")
-        raise HTTPException(status_code=500, detail=detail) from exc
+        if wrap_http_exception:
+            raise HTTPException(status_code=500, detail=detail) from exc
+        else:
+            raise exc

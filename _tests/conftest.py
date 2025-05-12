@@ -46,31 +46,39 @@ from valkey.exceptions import TimeoutError, ValkeyError
 
 from app.core.valkey_core.config import ValkeyConfig
 
+from app.core.valkey_core.client import ValkeyClient
+
+
+
 @pytest_asyncio.fixture
-async def redis_client(event_loop):
-    """Yields a connected Valkey async client for integration tests."""
-    # Pass event_loop if ValkeyClient supports it, otherwise just use event_loop in fixture
-    try:
-        client = Valkey(loop=event_loop, host=ValkeyConfig.VALKEY_HOST, port=ValkeyConfig.VALKEY_PORT, db=ValkeyConfig.VALKEY_DB)
-    except TypeError:
-        client = Valkey(host=ValkeyConfig.VALKEY_HOST, port=ValkeyConfig.VALKEY_PORT, db=ValkeyConfig.VALKEY_DB)
+async def valkey_client():
+    """Yields a connected production ValkeyClient instance for integration tests with metrics disabled."""
+    # * Disable Prometheus metrics to avoid duplicate timeseries errors
+    old_metrics = getattr(ValkeyConfig, "VALKEY_METRICS_ENABLED", None)
+    ValkeyConfig.VALKEY_METRICS_ENABLED = False
+    client = ValkeyClient()
+    await client.get_client()  # Ensure connection is established
     try:
         yield client
     finally:
-        await client.close()
+        await client.shutdown()
+        if old_metrics is not None:
+            ValkeyConfig.VALKEY_METRICS_ENABLED = old_metrics
+
+
 
 from app.core.valkey_core.cache.valkey_cache import ValkeyCache
-from app.core.valkey_core.client import client as valkey_client
+
 from app.core.valkey_core.config import ValkeyConfig
 from app.core.valkey_core.limiting.rate_limit import check_rate_limit
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def flush_valkey(event_loop, redis_client):
+async def flush_valkey(event_loop, valkey_client):
     """Flushes the Valkey database before and after each test for isolation."""
-    await redis_client.flushdb()
+    await valkey_client.flushdb()
     yield
-    await redis_client.flushdb()
+    await valkey_client.flushdb()
 
 @pytest_asyncio.fixture
 async def valkey_cache(event_loop):
