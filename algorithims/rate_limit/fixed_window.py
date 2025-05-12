@@ -4,7 +4,7 @@
 """
 import logging
 
-from app.core.valkey_core.client import client as valkey_client
+from app.core.valkey_core.client import get_valkey_client
 
 # ! This implementation assumes VALKEY is healthy and available.
 # todo: Add fail-open logic and Prometheus metrics if needed
@@ -12,23 +12,24 @@ from app.core.valkey_core.client import client as valkey_client
 async def is_allowed_fixed_window(
     key: str, limit: int, window: int
 ) -> bool:
+    try:
+        valkey_client = get_valkey_client()
+        redis = await valkey_client.aconn()
+        count = await redis.incr(key)
+        if count == 1:
+            await redis.expire(key, window)
+        return count <= limit
+    except Exception as e:
+        import logging
+        logging.warning(f"[fixed_window] VALKEY unavailable, allowing event (fail-open): {e}")
+        return True
+
     """
-    * Fixed Window Rate Limiter (DI version)    
+    * Fixed Window Rate Limiter (DI version)
     Args:
-        key (str): Injected RedisCache instance
         key (str): Unique identifier for the rate limit (user ID, IP, etc.)
         limit (int): Max allowed requests per window
         window (int): Window size in seconds
     Returns:
         bool: True if allowed, False if rate limited
     """
-    try:
-        count = await valkey_client.incr(key)
-        if count == 1:
-            await valkey_client.expire(key, window)
-        return count <= limit
-    except Exception as e:
-        # ! Fail-open: If VALKEY is unavailable, allow the event and log a warning
-        import logging
-        logging.warning(f"[fixed_window] Redis unavailable, allowing event (fail-open): {e}")
-        return True

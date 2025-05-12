@@ -4,7 +4,7 @@
 """
 import logging
 import time
-from app.core.valkey_core.client import client as valkey_client
+from app.core.valkey_core.client import get_valkey_client
 
 # ! Throttle: allow one event per interval
 # todo: Add fail-open logic and Prometheus metrics if needed
@@ -12,6 +12,21 @@ from app.core.valkey_core.client import client as valkey_client
 async def is_allowed_throttle(
     key: str, interval: int
 ) -> bool:
+    try:
+        import time
+        valkey_client = get_valkey_client()
+        redis = await valkey_client.aconn()
+        now = int(time.time())
+        result = await redis.setnx(key, now)
+        if result:
+            await redis.expire(key, interval)
+            return True
+        return False
+    except Exception as e:
+        import logging
+        logging.warning(f"[throttle] VALKEY unavailable, allowing event (fail-open): {e}")
+        return True
+
     """
     * Throttle: allow only one event per interval
     Args:
@@ -20,14 +35,3 @@ async def is_allowed_throttle(
     Returns:
         bool: True if allowed, False if throttled
     """
-    try:    
-        now = int(time.time())
-        result = await valkey_client.setnx(key, now)
-        if result:
-            await valkey_client.expire(key, interval)
-            return True
-        return False
-    except Exception as e:
-        # ! Fail-open: If VALKEY is unavailable, allow the event and log a warning
-        logging.warning(f"[throttle] VALKEY unavailable, allowing event (fail-open): {e}")
-        return True

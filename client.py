@@ -86,6 +86,16 @@ class ValkeyLock:
 
 
 class ValkeyClient:
+    # ... existing code ...
+    @property
+    def conn(self):
+        """Return the underlying Valkey/ValkeyCluster connection (sync, may be None if not initialized)."""
+        return self._client
+
+    async def aconn(self):
+        """Return the underlying Valkey/ValkeyCluster connection, initializing if needed (async)."""
+        return await self.get_client()
+
     """
     Valkey client wrapper with connection management and utilities.
 
@@ -427,8 +437,18 @@ class ValkeyClient:
         return ValkeyLock(self, name, timeout, sleep, blocking, blocking_timeout, thread_local)
 
 
-# Singleton Valkey client instance
-client = ValkeyClient()
+# Factory for Valkey client instance
+
+def get_valkey_client():
+    """
+    Returns a new ValkeyClient instance for the current event loop.
+    Use this in async code to avoid event loop issues with singletons.
+    """
+    return ValkeyClient()
+# todo: Remove global singleton if not needed for legacy compatibility
+import warnings
+warnings.warn("The global 'client' singleton is deprecated. Use get_valkey_client() instead.", DeprecationWarning)
+client = get_valkey_client()
 
 # Module-level functions for convenience
 get_client = client.get_client

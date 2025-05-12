@@ -4,7 +4,7 @@
 """
 import logging
 import time
-from app.core.valkey_core.client import client as valkey_client
+from app.core.valkey_core.client import get_valkey_client
 
 # ! Uses VALKEY sorted sets for timestamped requests
 
@@ -24,6 +24,7 @@ async def is_allowed_sliding_window(
     try:
         now = int(time.time())
         min_score = now - window
+        valkey_client = get_valkey_client()
         p = valkey_client.pipeline()
         p.zremrangebyscore(key, 0, min_score)
         p.zadd(key, {str(now): now})

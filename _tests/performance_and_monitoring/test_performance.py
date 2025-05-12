@@ -16,13 +16,14 @@ import pytest
 
 from app.core.valkey_core.client import client as valkey_client
 
+
 logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
 async def test_failover_scenarios():
     """Test performance during failover scenarios"""
-    client = RedisClient()
+    client = valkey_client
 
     # Simulate failover by attempting to set twice, expecting one failure and one success
     start = time.time()
