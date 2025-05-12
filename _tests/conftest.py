@@ -3,6 +3,13 @@ Shared pytest fixtures and configuration for Valkey tests
 """
 
 import asyncio
+import sys
+import pytest
+import pytest_asyncio
+
+# ! Windows: Use SelectorEventLoopPolicy for pytest-asyncio compatibility
+if sys.platform.startswith("win"):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # If you have a ValkeyCache or similar, import here
 # from app.core.valkey_core.cache.valkey_cache import ValkeyCache
@@ -40,11 +47,13 @@ from valkey.exceptions import TimeoutError, ValkeyError
 from app.core.valkey_core.config import ValkeyConfig
 
 @pytest_asyncio.fixture
-async def redis_client():
-    """
-    Provides a real Valkey async client for integration tests.
-    """
-    client = Valkey(host=ValkeyConfig.VALKEY_HOST, port=ValkeyConfig.VALKEY_PORT, db=ValkeyConfig.VALKEY_DB)
+async def redis_client(event_loop):
+    """Yields a connected Valkey async client for integration tests."""
+    # Pass event_loop if ValkeyClient supports it, otherwise just use event_loop in fixture
+    try:
+        client = Valkey(loop=event_loop, host=ValkeyConfig.VALKEY_HOST, port=ValkeyConfig.VALKEY_PORT, db=ValkeyConfig.VALKEY_DB)
+    except TypeError:
+        client = Valkey(host=ValkeyConfig.VALKEY_HOST, port=ValkeyConfig.VALKEY_PORT, db=ValkeyConfig.VALKEY_DB)
     try:
         yield client
     finally:
@@ -57,21 +66,22 @@ from app.core.valkey_core.limiting.rate_limit import check_rate_limit
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def flush_valkey():
-    """
-    ! Flush Valkey before each test for isolation
-    """
-    await valkey_client.flushdb()
+async def flush_valkey(event_loop, redis_client):
+    """Flushes the Valkey database before and after each test for isolation."""
+    await redis_client.flushdb()
+    yield
+    await redis_client.flushdb()
 
-
-@pytest.fixture
-def valkey_cache():
-    """# Pre-configured ValkeyCache instance (if available)
-"""
-    cache = ValkeyCache()
+@pytest_asyncio.fixture
+async def valkey_cache(event_loop):
+    """Pre-configured ValkeyCache instance for tests. Cleans up test namespace after each test."""
+    # Pass event_loop if ValkeyCache supports it, otherwise just use event_loop in fixture
+    try:
+        cache = ValkeyCache(loop=event_loop)
+    except TypeError:
+        cache = ValkeyCache()
     yield cache
-    # Cleanup any test data
-    asyncio.run(cache.clear_namespace("test_"))
+    await cache.clear_namespace("test_")
 
 
 @pytest.fixture
