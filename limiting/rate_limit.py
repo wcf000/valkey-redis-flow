@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from fastapi import HTTPException, status
 from prometheus_client import Counter, Gauge
 
+
 # from app.core.third_party_integrations.supabase_home.functions.auth import SupabaseAuthService  # ! Deprecated: Use async get_auth_service() instead
 from app.core.third_party_integrations.supabase_home.client import get_supabase_client
 from app.core.third_party_integrations.supabase_home.app import SupabaseAuthService

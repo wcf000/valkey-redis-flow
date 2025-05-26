@@ -55,29 +55,3 @@ async def is_allowed_token_bucket(
         import logging
         logging.warning(f"[token_bucket] VALKEY unavailable, allowing event (fail-open): {e}")
         return True
-    """
-    * Token Bucket Rate Limiter
-    Args:
-        key (str): Unique identifier for the bucket (user ID, IP, etc.)
-        capacity (int): Max tokens in bucket
-        refill_rate (int): Tokens added per interval
-        interval (int): Interval in seconds
-    Returns:
-        bool: True if allowed, False if rate limited
-    """
-    try:
-        now = int(time.time())
-        allowed = await valkey_client.eval(
-            TOKEN_BUCKET_LUA,
-            1,
-            key,
-            capacity,
-            refill_rate,
-            interval,
-            now,
-        )
-        return allowed == 1
-    except Exception as e:
-        # ! Fail-open: If VALKEY is unavailable, allow the event and log a warning
-        logging.warning(f"[token_bucket] VALKEY unavailable, allowing event (fail-open): {e}")
-        return True
