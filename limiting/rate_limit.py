@@ -65,13 +65,10 @@ async def check_rate_limit(client, key: str, limit: int, window: int) -> bool:
         # DEBUG: remove expired entries
         cutoff = (now - timedelta(seconds=window)).timestamp()
         print(f"🔍 DEBUG [check_rate_limit] removing entries older than {cutoff}")
-        # zremrangebyscore returns int, must await for async Redis
-        # Remove expired entries (synchronous call returns int)
+        # Remove expired entries - check if this needs await or not
         redis.zremrangebyscore(key, 0, cutoff)
         
         # Get current count BEFORE adding the new request
-        # zcard returns current count, must await for async Redis
-        # Get current count BEFORE adding the new request (synchronous int)
         current_count = redis.zcard(key)
         print(f"🔍 DEBUG [check_rate_limit] current_count after cleanup: {current_count}")
         logger.debug(f"[check_rate_limit] Current count for key={key}: {current_count}, limit={limit}")
@@ -83,12 +80,9 @@ async def check_rate_limit(client, key: str, limit: int, window: int) -> bool:
             return False
         
         # If we're under the limit, add the current request
-        # zadd adds new entry, must await for async Redis
-        # Add new entry timestamp (synchronous call)
         redis.zadd(key, {now.timestamp(): now.timestamp()})
         print(f"🔍 DEBUG [check_rate_limit] added new entry timestamp {now.timestamp()}")
-        # expire sets TTL, must await for async Redis
-        # Set key TTL (synchronous call)
+        # Set key TTL
         redis.expire(key, window)
         print(f"🔍 DEBUG [check_rate_limit] set key expire to {window} seconds")
         
