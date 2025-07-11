@@ -23,12 +23,12 @@ from valkey.backoff import (
     ExponentialBackoff,
 )
 from valkey.retry import Retry
-from app.core.valkey_core.exceptions.exceptions import TimeoutError, ValkeyError
+from .exceptions.exceptions import TimeoutError, ValkeyError
 
-from app.core.valkey_core.config import ValkeyConfig
-from app.core.valkey_core.exceptions.exceptions import handle_valkey_exceptions
-from app.core.valkey_core.decorators import track_valkey_metrics
-from app.core.prometheus.metrics import get_cache_count, get_cache_latency, get_cache_hit_ratio
+from .config import ValkeyConfig
+from .exceptions.exceptions import handle_valkey_exceptions
+from .decorators import track_valkey_metrics
+from ..prometheus.metrics import get_cache_count, get_cache_latency, get_cache_hit_ratio
 
 VALKEY_CLUSTER = ValkeyConfig.VALKEY_CLUSTER
 VALKEY_DB = ValkeyConfig.VALKEY_DB
